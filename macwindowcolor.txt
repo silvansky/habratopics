@@ -1,0 +1,192 @@
+Кастомизация заголовка окна в Mac OS X
+
+
+
+
+Добрый день, %username%!
+
+Не так давно пришла необходимость в кастомизации заголовка окна своей программы в Mac OS X. Если это делают iCal.app и Adress Book.app, то почему бы и мне не сделать так же?
+<img src="http://habrastorage.org/storage1/1c230cf4/f07d1420/623cc973/762ca9f5.png"/>
+Первые же ссылки из гугла дали мне несколько зацепок, и даже одна тестовая программа (после долгих плясок с бубном) скомпилилась и отобразила свой нестандартный заголовок. Но она требовала подключения приватных хедеров, их модификации (для соответствия новой версии Mac OS X) и т.п.... А мне хотелось лучшего, хотелось сделать проще, да ещё и задать цвет текста заголовка окна (для гармонии с новым цветом заголовка). Отбросив все неудачные примеры, начал я копать зацепки...
+
+И выяснил, что в обычной программе за отрисовку окна отвечает недокументированный класс <b>NSThemeFrame</b>, с ним-то мы и будем работать.
+
+Осторожно! Под катом присутствует <i>магия рантайма</i>.
+<habracut text="Магию в студию!" />
+Для начала нам понадобится приватный хедер NSThemeFrame.h (не оригинальный, а реверснутый, разумеется), его легко нагуглить. Если лень, то <a href="http://zathras.de/programming/cocoa/UKCustomWindowFrame.zip/UKCustomWindowFrame/PrivateHeaders/NSThemeFrame.h">вот прямая ссылка</a>. Его не обязательно добавлять в проект, он нам нужен только для изучения.
+
+Пробежавшись по нему глазами, обратим внимание на методы drawRect: и _drawTitleStringIn:withColor:. Названия говорящие, вот их-то мы и будем перегружать, дабы полностью контролировать отрисовку окна. Вооружившись <objc/runtime.h>, начинаем.
+
+Во-первых, нам надо как-то получить класс NSThemeFrame. Можно его получить из приватного хедера, но это плохой вариант. Допустим, в AppDelegate мы имеем аутлет нашего NSWindow, тогда, чтобы получить нужный класс, делаем так:
+
+<source lang=cpp>
+id _class = [[[self.window contentView] superview] class];
+</source>
+Почему? Потому что NSThemeFrame является базовым View в окне, а наш contentView расположен уже на нём.
+
+Во-вторых, переходим к <b>магии</b>.
+
+Нам требуется объявить свой класс, в нём - методы drawInRect: и _drawTitleStringIn:withColor:, затем добавить в класс NSThemeFrame эти методы (но под другими именами), и, наконец, обменять методы местами с оригинальными, чтобы иметь возможность из новых вызывать оригинальные.
+
+Сложно звучит? Ну, рантайм в помощь!
+
+Объявим вспомогательный класс DrawHelper (напрямую он использоваться не будет, так что не обращаем внимания на warning при компиляции).
+
+<source lang=cpp>
+#import <objc/runtime.h>
+
+// global frame color
+static NSColor * gFrameColor = nil;
+// global title color
+static NSColor * gTitleColor = nil;
+
+@interface DrawHelper : NSObject
+{
+}
+
+// to prevent errors
+- (float)roundedCornerRadius;
+- (void)drawRectOriginal:(NSRect)rect;
+- (void) _drawTitleStringOriginalIn: (NSRect) rect withColor: (NSColor *) color;
+- (NSWindow*)window;
+- (id)_displayName;
+- (NSRect)bounds;
+- (void)_setTextShadow:(BOOL)on;
+
+- (void)drawRect:(NSRect)rect;
+- (void) _drawTitleStringIn: (NSRect) rect withColor: (NSColor *) color;
+@end
+
+@implementation DrawHelper
+
+- (void)drawRect:(NSRect)rect
+{
+     // Call original drawing method
+     [self drawRectOriginal:rect];
+     [self _setTextShadow:NO];
+    
+     NSRect titleRect;
+
+     NSRect brect = [self bounds];
+
+     // creating round-rected bounding path
+     float radius = [self roundedCornerRadius];
+     NSBezierPath *path = [NSBezierPath alloc];
+     NSPoint topMid = NSMakePoint(NSMidX(brect), NSMaxY(brect));
+     NSPoint topLeft = NSMakePoint(NSMinX(brect), NSMaxY(brect));
+     NSPoint topRight = NSMakePoint(NSMaxX(brect), NSMaxY(brect));
+     NSPoint bottomRight = NSMakePoint(NSMaxX(brect), NSMinY(brect));
+    
+     [path moveToPoint: topMid];
+     [path appendBezierPathWithArcFromPoint: topRight
+                            toPoint: bottomRight
+                              radius: radius];
+     [path appendBezierPathWithArcFromPoint: bottomRight
+                            toPoint: brect.origin
+                              radius: radius];
+     [path appendBezierPathWithArcFromPoint: brect.origin
+                            toPoint: topLeft
+                              radius: radius];
+     [path appendBezierPathWithArcFromPoint: topLeft
+                            toPoint: topRight
+                              radius: radius];
+     [path closePath];
+    
+     [path addClip];
+    
+     // rect for title
+     titleRect = NSMakeRect(0, 0, brect.size.width, brect.size.height);
+    
+     // get current context
+     CGContextRef context = (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
+     // multiply mode - for colorizing original border
+     CGContextSetBlendMode(context, kCGBlendModeMultiply);
+    
+     // draw background
+     if (!gFrameColor)
+          // default bg color
+          gFrameColor = [NSColor colorWithCalibratedRed: (126 / 255.0) green: (161 / 255.0) blue: (177 / 255.0) alpha: 1.0];
+    
+     [gFrameColor set];
+    
+     [[NSBezierPath bezierPathWithRect:rect] fill];
+    
+     // copy mode - for title
+     CGContextSetBlendMode(context, kCGBlendModeCopy);
+    
+     // draw title text
+     [self _drawTitleStringIn: titleRect withColor: nil];
+}
+
+- (void)_drawTitleStringIn: (NSRect) rect withColor: (NSColor *) color
+{
+     if (!gTitleColor)
+          // default text color
+          gTitleColor = [NSColor colorWithCalibratedRed: 1.0 green: 1.0 blue: 1.0 alpha: 1.0];
+     [self _drawTitleStringOriginalIn: rect withColor: gTitleColor];
+}
+
+@end
+</source>
+Здесь всё достаточно просто. Объявляем два цвета - цвет заголовка и цвет текста, объявляем наш класс, в нём - кучу методов, которые нам нужны (имплементировать их не надо, в NSThemeFrame они есть) и, собственно, наши два метода для отрисовки текста и фона.
+
+Для простоты примера я сделал отрисовку стандартного заголовка и "колоризацию" его одним цветом (это позволяет простым способом сохранить привычную "объёмность" заголовка). Можно сделать и полностью кастомную отрисовку, используюя NSImage или градиенты, при этом даже не обязательно вызывать drawRectOriginal:, ибо тогда нам не нужен будет стандартный заголовок. Но это оставим для самостоятельных упражнений.
+
+После вызова стандартного метода отрисовки заголовка, переходим к созданию нашей области рисования. Обычно это прямоугольник со скруглёнными углами. Реализацию для других типов окон (например, с нескруглёнными нижними углами) оставляю так же для самостоятельной работы.
+
+Ну а потом идёт отрисовка нашего цвета поверх уже отрисованного стандартного заголовка в режиме multiply (подробнее о режимах можно почитать в документации от Apple).
+
+И в самом конце мы рисуем наш текст заголовка. Опять вызывается наша функция, которая игнорирует переданный в неё цвет и насильственно рисует текст заранее заданным цветом (через оригинальную функцию рисования).
+
+И вот мы добрались до самого интересного! Собственно, <b>магия</b>:
+
+<source lang=cpp>
+- (void)applicationWillFinishLaunching:(NSNotification *)aNotification
+{
+     id _class = [[[self.window contentView] superview] class];
+    
+     // Exchange drawRect:
+     Method m0 = class_getInstanceMethod([DrawHelper class], @selector(drawRect:));
+     class_addMethod(_class, @selector(drawRectOriginal:), method_getImplementation(m0), method_getTypeEncoding(m0));
+    
+     Method m1 = class_getInstanceMethod(_class, @selector(drawRect:));
+     Method m2 = class_getInstanceMethod(_class, @selector(drawRectOriginal:));
+    
+     method_exchangeImplementations(m1, m2);
+    
+     // Exchange _drawTitleStringIn:withColor:
+     Method m3 = class_getInstanceMethod([DrawHelper class], @selector(_drawTitleStringIn:withColor:));
+     class_addMethod(_class, @selector(_drawTitleStringOriginalIn:withColor:), method_getImplementation(m3), method_getTypeEncoding(m3));
+    
+     Method m4 = class_getInstanceMethod(_class, @selector(_drawTitleStringIn:withColor:));
+     Method m5 = class_getInstanceMethod(_class, @selector(_drawTitleStringOriginalIn:withColor:));
+    
+     method_exchangeImplementations(m4, m5);
+}
+</source>
+(в моём случае, я поместил этот код в AppDelegate.m, дабы быть уверенным, что окно уже будет создано)
+
+По порядку:
+
+1. получаем класс NSThemeFrame
+2. берём метод drawRect: из класса DrawHelper
+3. добавляем этот метод в класс NSThemeFrame под именем drawRectOriginal:
+4. берём из класса NSThemeFrame методы drawInRect: и drawRectOriginal:
+5. меняем их имплементации местами!
+
+Далее то же самое делаем для метода _drawTitleStringIn:withColor:.
+
+И вот теперь можем радоваться! Наше окно радует (или не очень) наш глаз своим нестандартным цветом заголовка.
+
+Если очень хочется сделать некое "скинирование" (смена цвета заголовка на лету), то класс DrawHelper и содержимое функции applicationWillFinishLaunching: надо вынести в отдельный .m файл, а так же объявить и реализовать функции доступа к gFrameColor и gTitleColor. И не забыть перерисовать все свои окна после изменения этих параметров. Но это, опять таки, оставлю читателю в качестве самостоятельной работы.
+
+Но, как и стоило бы ожидать, у данного подхода есть минусы:
+
+1. для получения класса NSThemeFrame нам потребуется уже созданное окно;
+2. данный способ не предполагает раздельной кастомизации окон, к примеру, нельзя сделать два окна с разными заголовками (конечно, можно, но это потребует достаточно много усилий и достаточно много кода);
+3. окна могут отрисовываться в обход NSThemeFrame, например, с помощью NSGrayFrame, тогда данный способ, скорее всего, не поможет, и придётся играть ещё и со вторым классом;
+4. игры с рантаймом хороши в меру.
+
+PS: изначально всё это делалось в связке Qt + Cocoa, но было перенесено на чистый Cocoa. Если кому-либо интересны хитрости взаимодействия Qt с Cocoa, то могу поделиться опытом.
+
+PPS: выкладывать код на гитхаб не вижу смысла, он очень легко переносится в любой проект простым копипастом в AppDelegate.m.

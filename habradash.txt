@@ -1,0 +1,168 @@
+Создаём простейший виджет для Mac OS X Dashboard
+
+
+
+Здравствуйте, хабравчане-маководы!
+<img src="http://habrastorage.org/storage2/9ec/afd/457/9ecafd457dd040b1fd49fb3b7d29345b.png" align=right alt="Картинка поста" title="Картинка поста" />
+Сегодня мы с вами попробуем разобраться в азах создания виджета для Dashboard в Mac OS X. Нам понадобится программа Dashcode, предназначенная как раз для этого.
+
+Для начала немного теории. Виджет в Dashboard - это специально сформировання веб-страничка, упакованная в бандл вместе со всем ресурсами. Ну, и немного служебной информации в довесок. Соответственно, используемый язык программирования - JavaScript. Если Вы уже знакомы с ним, а так же с HTML/CSS (хотя это вряд ли понадобится), то Вы <b>уже</b> способны написать простенький виджет. Если же нет, то не стоит расстраиваться, этот язык очень прост и интуитивно понятен, разобраться с ним можно достаточно быстро. Далее я буду считать, что с JS читатель более-менее знаком. Сама же статья рассчитана на новичков, так что прошу не ругать за "слишком простое изложение и детальное разжёвывание элементарных вещей". Кроме того, за дизайн тоже прошу не пинать - ну не дизайнер я, не дизайнер! Если кто хочет помочь с этим делом - <i>welcome =)</i>
+
+Для удобства, все исходники (а так же готовый к использованию виджет) выложены на гитхаб, ссылка в конце статьи. Но не спешите просто скачивать их! Лучше потратить немного времени и разобраться, как создать это всё самому.
+
+Итак, приступим. В качестве цели для экспериментов я, разумеется, выбрал наш любимый хабр. Мы будем шаг за шагом делать виджет, отображающий карму, рейтинг и позицию в рейтинге хабралюдей выбранного хабраюзера.
+<img src="http://habrastorage.org/storage2/90e/660/c75/90e660c750f892165d6a25c5a92dd575.png" alt="Картинка для привлечения внимания" title="Картинка для привлечения внимания" />
+Такой виджет (ну, очень похожий) <a href='http://habrahabr.ru/post/9547/'>уже был создан</a> хабратоварищем <hh user="neoromantic" /> аж в 2007 году, но ссылки на скачивание не рабочие, а кроме того, та статья не содержала практического руководства по созданию подобных виджетов.
+<habracut text="Создадим же проект с нуля!" />
+<s>Восстановим справе</s>Восполним эти недостатки.
+
+Создадим пустой проект. Для этого запустим Dashcode и кликнем в нужные места. Процесс тривиален.
+
+Что же мы видим? Базовый виджет имеет основное и вспомогательное состояния (соответственно, front и back в левой панели). Первое отображается в обычном режиме работы, второе - для настройки параметров виджета. Переключаться между ними можно выбирая соответствующие пункты в списке компонент слева. Мы можем смело удалить всё лишнее, кроме кнопок "info" и "Done", которые служат для переключения между основным и вспомогательным состояниями. Далее, для простоты, будем называть это лицевой и тыльной сторонами виджета.
+
+Теперь на лицевую сторону нашего виджета (без единой строчки кода!) кидаем нужные компоненты: несколько надписей. Для этого открываем библиотеку комонент - кнопка <img src="http://habrastorage.org/storage2/a42/2c7/df1/a422c7df1b3262581309396514fd7488.png"/>Library справа вверху - и перетаскиваем на виджет компоненты типа "Text". Теперь открываем <img src="http://habrastorage.org/storage2/b5c/010/505/b5c010505705b4fa06b633041c838685.png"/>Inspector (так же кнопка справа вверху) и с его помощью настраиваем размеры, цвета и так далее для нашего виджета. С его же помощью зададим осмысленные имена нашим надписям - для более удобного доступа из кода.
+
+На тыльную сторону кинем надпись и поле ввода. Ну, и ещё картинку - для красоты. И в итоге получаем примерно следующее:
+
+<img src="http://habrastorage.org/storage2/94d/241/7f1/94d2417f1c4ae555c4f02dd904eb6eb0.png"/>
+
+Что ж, неплохо, наш GUI уже готов! Можем жать <img src="http://habrastorage.org/storage2/2f6/338/fac/2f6338fac83291b0e2adca663b8b5c5e.png"/><code>Cmd+R</code> и потыкать на кнопки (i) и Done, любуясь эффектом переворота виджета.
+
+Но одного GUI нам мало, так что переходим к логике. Для этого слева вверху жмём на кнопку <img src="http://habrastorage.org/storage2/e90/ba5/24d/e90ba524dfdd43ed09bc91e06b21ee1a.png"/>View и выбираем в выпадающем списке Source Code. И можем уже лицезреть наш автоматически сгенерированный JavaScript-код. И смело начинаем его править!
+
+Для начала определимся с "архитектурой" нашего виджета. Мы будем по таймеру запрашивать через <a href="http://habrahabr.ru/info/help/api/">API хабра</a> данные о пользователе, парсить их и отображать карму и рейтинг на лицевой стороне виджета. Для этого объявляем глобальную переменную <code>updateTimer</code> в начале файла main.js, создаём функции <code>startTimer(msec)</code> и <code>stopTimer()</code>, которые будут с этим таймером работать. Так же создадим функцию <code>updateStats()</code>, которая будет вызываться по таймеру.
+
+<source lang=js>
+function startTimer(msec)
+{
+    updateTimer = setTimeout("updateStats()", msec);
+}
+
+function stopTimer()
+{
+    clearTimeout(updateTimer);
+}
+
+function updateStats()
+{
+    alert("It works!");
+    startTimer(updateInterval);
+}
+</source>
+В функцию <code>show()</code> вставим вызов <code>startTimer(5000)</code> для запуска таймера при показе виджета, а в функцию <code>hide()</code>, соответственно, вставим <code>stopTimer()</code> для экономии ресурсов когда виджет не показан (Dashboard не активна). Теперь мы можем запустить наш виджет и увидеть в консоли (Cmd+Alt+1) вывод "It works!" каждые 5 секунд.
+
+Но нас ведь не интересует такой вздор, мы хотим по таймеру дёргать карму и рейтинг! Так что в функции <code>updateStatus()</code> вместо алерта мы будем вызывать функцию <code>execStatsRequest()</code> (API хабра советует не дёргать данные о пользователе чаще, чем раз в минуту, так что увеличим заодно интервал).
+
+Теперь дело за HTTP-запросами к API хабрахабра. Создаём новые функции - execStatsRequest() и processStatsRequest(), которые будут служить для запуска и обработки запросов. Вот как они выглядят у меня:
+<source lang=js>
+function execStatsRequest()
+{
+    if (userName().length > 0)
+    {
+        var Url = "http://habrahabr.ru/api/profile/" + userName() + "/";
+        alert("User: " + userName() + "\nURL: " + Url);
+
+        xmlHttp = new XMLHttpRequest();
+        xmlHttp.onreadystatechange = processStatsRequest;
+        xmlHttp.overrideMimeType('text/xml');
+        xmlHttp.open("GET", Url, true);
+        xmlHttp.send();
+    }
+    else
+    {
+        resetStats();
+    }
+}
+
+function processStatsRequest()
+{
+    if (xmlHttp.readyState == 4 && xmlHttp.status == 200)
+    {
+        alert("xml is " + xmlHttp.responseXML);
+        if (xmlHttp.responseXML == null)
+        {
+            resetStats();
+        }
+        else
+        {
+            alert(xmlHttp.responseText);
+            var error = xmlHttp.responseXML.getElementsByTagName("error")[0];
+            if (error != null)
+            {
+                alert("Some error occured!");
+                resetStats();
+                setLogin("<" + userName() + " not found>");
+                return;
+            }
+            var login = xmlHttp.responseXML.getElementsByTagName("login")[0].firstChild.nodeValue;
+            var karma = xmlHttp.responseXML.getElementsByTagName("karma")[0].firstChild.nodeValue;
+            var rating = xmlHttp.responseXML.getElementsByTagName("rating")[0].firstChild.nodeValue;
+            var position = xmlHttp.responseXML.getElementsByTagName("ratingPosition")[0].firstChild.nodeValue;
+            setLogin(login);
+            setKarma(karma);
+            setRating(rating);
+            setPosition(position);
+        }                   
+    }
+}
+</source>
+Здесь мы формируем URL запроса, создаём объект типа XMLHttpRequest, и с его помощью запрашиваем методом GET наши данные. Что примечательно, приходится <b>насильно ставить</b> ответу MIME-тип <i>"text/xml"</i>, ибо хабра-апи возвращает почему-то "text/html". А в функции <code>processStatsRequest()</code> мы парсим полученный в XML ответ. При этом, мы проверяем его на наличие ошибки - и уведомляем об этом пользователя.
+
+Тут стоит отвлечься от кода и настроить сам виджет - разрешить ему работать с сетью. Для этого в левой панели прокручиваем список элементов вниз и видим пункт Widget Attributes. Здесь просто ставим галочку "Allow Network Access". Так же можно настроить id виджета и его версию. Теперь вернёмся к коду.
+
+Функции <code>setLogin()</code>, <code>setKarma()</code> и иже с ними отображают передаваемую в них строку в нужных полях лицевой стороны. Они были созданы для удобства и выглядят однотипно, вроде того:
+
+<source lang=js>
+function setLogin(login)
+{
+    document.getElementById("userName").innerText = login;
+}
+</source>
+Функция же <code>resetStats()</code> устанавливает дефолтные значения для всех полей. А функции setUserName() и userName() служат обёрткой над полем ввода имени хабраюзера на тыльной стороне виджета:
+
+<source lang=js>
+function userName()
+{
+    return document.getElementById("nameEdit").value;
+}
+
+function setUserName(name)
+{
+    document.getElementById("nameEdit").value = name;
+}
+</source>
+Что ж, виджет почти готов. Почему почти? Да потому что нам надо бы ещё сохранять в настройках введённое имя пользователя. Для этого пишем функции <code>loadPrefs()</code> и <code>savePrefs()</code>.
+
+<source lang=js>
+var preferenceKey = "habraUserName";
+
+function loadPrefs()
+{
+    var name = widget.preferenceForKey(widget.identifier + "-" + preferenceKey);
+    alert(widget.identifier + "-" + preferenceKey);
+    alert("name from preferences: " + name);
+    if (name != null)
+        setUserName(name);
+
+}
+
+function savePrefs()
+{
+    widget.setPreferenceForKey(userName(), widget.identifier + "-" + preferenceKey);
+}
+</source>
+Эти функции целесообразно вызывать соответственно в функциях <code>show()</code> и <code>hide()</code>. Настройка будет уникальна для каждого виджета, что позволяет накидать на Dashboard виджеты с информацией по нескольким пользователям.
+
+Ну, теперь уж точно виджет готов к использованию. Но нет предела совершенству! Локализуем теперь наш виджет, дабы иметь русскую и английскую версии. Вы так же можете сделать (как домашнее задание) локализацию на французский и японский языки.
+
+Переходм к нашей лицевой стороне, вызываем инспектор. Теперь поочерёдно выделяем наши надписи и в разделе Localization инспектора выставляем в поле Value значение на английском языке. Они, вероятно, будут совпадать с предустановленными уже значениями поля Key. Эти значения будут внесены в дефолтную (английскую) локализацию, что можно увидеть в файле <code>en.lproj/localizedStrings.js</code>.
+
+Теперь добавим русскую локализацию. Переходм в Widget Attributes и в разделе Localization добавляем (в левом списке) русский язык. Выбираем его, и теперь в правом списке можем вводить локализованные строки.
+<img src="http://habrastorage.org/storage2/954/13d/eb5/95413deb51f203a6599a69068043a409.png"/>
+Эти значения, соответственно, будут прописаны в <code>ru.lproj/localizedStrings.js</code>.
+
+Собственно, вот и всё, можем запускать наш виджет и любоваться своей (или чужой) кармой! Чтобы установить виджет в Dashboard, нужно выбрать Run & Share в левой панели и выбрать Save to Disk или Deploy to Dashboard - в зависимости от наших потребностей.
+
+Если хочется скачать уже готовый виджет, то милости прошу: <a href="https://github.com/silvansky/HabraDash/raw/master/HabraDash.zip">вот он</a>! Исходный код проекта для Dashcode можно взять на <a href="https://github.com/silvansky/HabraDash">гитхабе</a>.
+
+Надеюсь, кому-то эта статья оказалась полезной и список виджетов для Dashboard будет пополняться замечательными вещами!

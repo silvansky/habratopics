@@ -1,0 +1,221 @@
+Qt/Objective-C++11 или сборка Qt-проекта с помощью GCC-4.7 и Clang
+
+
+
+<img src="http://habrastorage.org/storage2/73d/226/d20/73d226d206c8012d750fe0f45dd89c2a.png" align=right />Всем доброго хабрадня!
+
+Сегодня я расскажу уважаемым хабражителям об очередном извращении - о сборке проекта, написанного на Qt, под Mac OS X компилятором GCC-4.7.0 с примесью Clang'а (про шланг - в конце статьи, там станет понятно, зачем ещё и его приплетать будем).
+
+Для чего нам GCC 4.7? Ну, например, чтобы использовать все те крутые фичи из стандарта C++11. Разве этого мало? Кроме поддержки нового стандарта, в нём очень <a href="http://gcc.gnu.org/gcc-4.7/changes.html">много улучшений</a> по сравнению с идущим в комплекте с Xcode GCC 4.2 (хотя он и оказывается на поверку i686-apple-darwin11-llvm-g++-4.2), так что смысл в переходе на 4.7 явно имеется. Но и проблемы присутствуют, о чём ниже.
+
+Мы можем предположить, что нам потребуются некие фичи из <code>Cocoa</code>, а значит, нам потребуется компилятор Objcetive-C, а ещё лучше - Objective-C++, чтобы, например, <a href="http://habrahabr.ru/post/133700/">интегрировать</a> наше Qt-приложение в окружение Mac OS X.
+<habracut text="Начнем!" />
+Начнём мы с установки GCC-4.7.0. Можно, конечно, воспользоваться уже готовой сборкой (например, <a href="https://github.com/sol-prog/gcc-4.7-binary">отсюда</a>), но мы пойдём путём джедая и соберём набор компиляторов сами, ведь в сборке по ссылке выше нет поддержки Objective-C[++]. Это проще, чем кажется на первый взгляд, можно всё делать вручную (следуя инструкции, к примеру, <a href="http://solarianprogrammer.com/2012/02/20/living-on-the-edge-building-gcc-4-7-on-mac-osx-lion/">отсюда</a>), а можно сделать нормальный скрипт, который сделает за нас всю работу. Вот, к примеру, мой скрипт, основанный на <a href="http://apple.stackexchange.com/questions/38222/how-do-i-install-gcc-via-homebrew">этом обсуждении</a>, он потребует brew и wget:
+
+<source lang="bash">
+#!/bin/bash
+
+#
+# This script downloads and builds GCC 4.7.0 for Mac OS X.
+# Depends on: brew, wget
+#
+# This file is modifyed version of script by Konrad Rudolph, found here:
+# http://apple.stackexchange.com/questions/38222/how-do-i-install-gcc-via-homebrew
+#
+
+VERSION=4.7.0
+VER_SHORT=4.7
+PREFIX=/usr/local/gcc-${VER_SHORT}
+TEMP_DIR=temp-gcc
+LANGUAGES=c,c++,objc,obj-c++
+MAKE='make -j 4'
+
+echo "Preparing to install GCC ${VERSION}..."
+echo " Installation path: ${PREFIX}"
+echo " Temporary dir: ${TEMP_DIR}"
+echo " Programming languages: ${LANGUAGES}"
+
+brew-path() { brew info $1 | head -n3 | tail -n1 | cut -d' ' -f1; }
+
+# Prerequisites
+
+echo
+echo "Installing gmp, mpfr and libmpc using brew..."
+
+brew install gmp
+brew install mpfr
+brew install libmpc
+
+# Download & install the latest GCC
+
+echo
+echo "Downloading GCC sources..."
+
+mkdir -p $PREFIX
+mkdir ${TEMP_DIR}
+cd ${TEMP_DIR}
+wget ftp://ftp.gnu.org/gnu/gcc/gcc-${VERSION}/gcc-${VERSION}.tar.gz
+tar xfz gcc-$VERSION.tar.gz
+rm gcc-${VERSION}.tar.gz
+cd gcc-${VERSION}
+
+mkdir build
+cd build
+
+echo
+echo "Configuring GCC..."
+
+../configure \
+     --prefix=$PREFIX \
+     --with-gmp=$(brew-path gmp) \
+     --with-mpfr=$(brew-path mpfr) \
+     --with-mpc=$(brew-path libmpc) \
+     --program-suffix=-${VER_SHORT} \
+     --enable-languages=${LANGUAGES} \
+     --with-system-zlib \
+     --enable-stage1-checking \
+     --enable-plugin \
+     --enable-lto \
+     --disable-multilib
+
+echo
+echo "Building GCC..."
+
+$MAKE bootstrap
+
+echo
+echo "Installing GCC..."
+
+make install
+</source>(за его развитием можно следить на <a href="https://github.com/silvansky/macscripts/blob/master/build_gcc.sh">гитхабе</a>)
+
+Что ж, после получасовой (±) сборки получаем GCC 4.7.0, установленный в /usr/local/gcc-4.7/bin. Теперь можно попробовать собрать наш проект с его помощью. Но для начала просто проверим, работает ли он:
+
+<source lang="bash">
+$ export PATH=/usr/local/gcc-4.7/bin:$PATH
+
+$ g++-4.7 --version
+g++-4.7 (GCC) 4.7.0
+Copyright (C) 2012 Free Software Foundation, Inc.
+Это свободно распространяемое программное обеспечение. Условия копирования
+приведены в исходных текстах. Без гарантии каких-либо качеств, включая
+коммерческую ценность и применимость для каких-либо целей.
+</source>
+Ну вот, совсем неплохо. Но как заставить qmake собирать проект именно этим компилятором? Кроме <code>export PATH</code> нам понадобится указать qmake какой компилятор использовать. Сделать это можно двумя способами.
+
+Первый способ, грубый, кривой и неудобный, а главное - в корне неправильный. Указать компилятор в .pro файле:
+
+<source lang="bash">
+macx {
+  QMAKE_CXX              = g++-4.7
+  QMAKE_CXXFLAGS        += -std=c++11 -v
+  QMAKE_CXXFLAGS_X86_64 -= -Xarch_x86_64
+  QMAKE_CC               = gcc-4.7
+  QMAKE_CFLAGS          += -std=c++11 -v
+  QMAKE_CFLAGS_X86_64   -= -Xarch_x86_64
+
+  QMAKE_LINK             = $$QMAKE_CXX
+  QMAKE_LINK_SHLIB       = $$QMAKE_CXX
+  QMAKE_LINK_C           = $$QMAKE_CC
+  QMAKE_LINK_C_SHLIB     = $$QMAKE_CC
+  QMAKE_LFLAGS_X86_64   -= -Xarch_x86_64
+
+  QMAKE_OBJECTIVE_CFLAGS_X86_64 -= -Xarch_x86_64
+}
+</source>
+Второй способ, аккуратный, красивый и <b>правильный</b>. Создать свой <code>mkspec</code>! Для этого заходим в <code>/usr/local/Qt4.8/mkspecs</code>, и выполняем для начала несложные команды:
+
+<source lang="bash">
+sudo cp macx-g++ macx-g++47
+sudo cp common/g++-base.conf common/g++47-base.conf
+sudo cp common/g++-macx.conf common/g++47-macx.conf
+</source>
+Далее в любимом текстовом редакторе (в моём случае - mcedit) приводим файл <code>macx-g++47/qmake.conf</code> к следующему виду:
+
+<source lang="bash">
+MAKEFILE_GENERATOR     = UNIX
+TARGET_PLATFORM          = macx
+TEMPLATE          = app
+CONFIG               += qt warn_on release app_bundle incremental global_init_link_order lib_version_first plugin_no_soname link_prl
+QT               += core gui
+QMAKE_INCREMENTAL_STYLE = sublib
+
+include(../common/mac.conf)
+include(../common/gcc-base-macx.conf)
+include(../common/g++47-macx.conf)
+load(qt_config)
+</source>
+По сути - дописываем "47" в середине предпоследней строки. Далее редактируем файл <code>common/g++47-macx.conf</code>, делаем его таким:
+
+<source lang="bash">
+include(g++47-base.conf)
+
+QMAKE_CFLAGS_RELEASE_WITH_DEBUGINFO += $$QMAKE_CFLAGS_DWARF2
+QMAKE_CXXFLAGS_RELEASE_WITH_DEBUGINFO += $$QMAKE_CFLAGS_DWARF2
+QMAKE_LFLAGS_RELEASE_WITH_DEBUGINFO += -g $$QMAKE_CFLAGS_DWARF2
+
+QMAKE_LFLAGS_STATIC_LIB += -all_load
+
+QMAKE_CFLAGS_X86_64 += -mmacosx-version-min=10.5 -std=c++11
+QMAKE_CFLAGS_PPC_64 += -mmacosx-version-min=10.5 -std=c++11
+
+QMAKE_CXXFLAGS_X86_64         = $$QMAKE_CFLAGS_X86_64
+QMAKE_CXXFLAGS_PPC_64         = $$QMAKE_CFLAGS_PPC_64
+QMAKE_OBJECTIVE_CFLAGS_X86_64 = $$QMAKE_CFLAGS_X86_64
+QMAKE_OBJECTIVE_CFLAGS_PPC_64 = $$QMAKE_CFLAGS_PPC_64
+QMAKE_LFLAGS_X86_64           = $$QMAKE_CFLAGS_X86_64
+QMAKE_LFLAGS_PPC_64           = $$QMAKE_CFLAGS_PPC_64
+
+QMAKE_OBJCFLAGS_PRECOMPILE       = -x objective-c-header -c ${QMAKE_PCH_INPUT} -o ${QMAKE_PCH_OUTPUT}
+QMAKE_OBJCFLAGS_USE_PRECOMPILE   = $$QMAKE_CFLAGS_USE_PRECOMPILE
+QMAKE_OBJCXXFLAGS_PRECOMPILE     = -x objective-c++-header -c ${QMAKE_PCH_INPUT} -o ${QMAKE_PCH_OUTPUT}
+QMAKE_OBJCXXFLAGS_USE_PRECOMPILE = $$QMAKE_CFLAGS_USE_PRECOMPILE
+</source>
+Опять же, по сути, мы меняем только флаги сборки и добавляем <font color=#acacac><s>MAGIC NUMBER</s></font> 47.
+
+Теперь допиливаем <code>g++47-base.conf</code>:
+
+<source lang="bash">
+QMAKE_CC = gcc-4.7
+
+QMAKE_LINK_C       = $$QMAKE_CC
+QMAKE_LINK_C_SHLIB = $$QMAKE_CC
+
+QMAKE_CFLAGS_RELEASE_WITH_DEBUGINFO += -O2 -g
+
+QMAKE_CXX = g++-4.7
+
+QMAKE_LINK       = $$QMAKE_CXX
+QMAKE_LINK_SHLIB = $$QMAKE_CXX
+
+QMAKE_CXXFLAGS_RELEASE_WITH_DEBUGINFO += $$QMAKE_CFLAGS_RELEASE_WITH_DEBUGINFO
+
+QMAKE_PCH_OUTPUT_EXT = .gch
+
+QMAKE_CFLAGS_PRECOMPILE       = -x c-header -c ${QMAKE_PCH_INPUT} -o ${QMAKE_PCH_OUTPUT}
+QMAKE_CFLAGS_USE_PRECOMPILE   = -include ${QMAKE_PCH_OUTPUT_BASE}
+QMAKE_CXXFLAGS_PRECOMPILE     = -x c++-header -c ${QMAKE_PCH_INPUT} -o ${QMAKE_PCH_OUTPUT}
+QMAKE_CXXFLAGS_USE_PRECOMPILE = $$QMAKE_CFLAGS_USE_PRECOMPILE
+</source>
+<img src="http://habrastorage.org/storage2/d29/d28/2d6/d29d282d6bf06c21b7b2cb3247857cd1.png" alt="image" align=left />Тут мы опять таки дописали "-4.7" в паре строк. Что ж, этого будет достаточно. Теперь можно настраивать Qt Creator для работы с новым mkspec'ом! В настройках идём в <code>Build & Run -> Tool Chains -> Add -> GCC</code>, в поле Compiler path вписываем <code>/usr/local/gcc-4.7/bin/g++-4.7</code>, в Debugger - <code>/usr/bin/gdb</code>, а в mkspec - <code>macx-g++47</code>. Сам же тулчейн можно обозвать как-нибудь типа "GCC-4.7", "c++11 compiler" или типа того. Теперь в настройках проекта можно выбирать наш новый тулчейн и - вуаля! - проект будет собираться нашим свежесобранным компилятором! Если же мы хотим всё это дело использовать из консоли, достаточно будет вызывать qmake с параметром <code>-spec macx-g++47</code>.
+
+Что ж, работать можно, проекты собираются, запускаются и работают. Но есть парочка проблем...
+
+Точнее, проблемок. Одна из них - если попробовать начать использовать в проекте Objective-C[++], то компилятор немножечко загнётся. Почему? Причина проста: компилятор Objective-C из GCC не понимает блоки! Как так? Почему? Кто допустил? Не знаю, но факт есть факт. Поэтому от него будет крайне мало толку вне C/C++. А жаль. Но не будем унывать! Если не удаётся собрать Objective-C[++] код с помощью GCC, соберём его clang'ом. Для этого опять таки редактируем файлы <code>g++47-base.conf</code> и <code>g++47-macx.conf</code>, дописываем в конец следующие строки:
+
+<source lang="bash">
+# in file g++47-base.conf
+QMAKE_OBJECTIVE_CC = clang
+
+# in file g++47-macx.conf
+QMAKE_OBJECTIVE_CFLAGS += -std=c++0x -stdlib=libc++
+</source>
+Таким образом, все наши исходники на C/C++ будут собираться с помощью g++-4.7, а исходники Objective-C[++] - с помощью clang. Неудобно? Конечно, неудобно! Казалось бы, легче перейти полностью на clang, благо он поддержиывает C++11 в некотором объёме. Но! До GCC ему пока далековато, так что в наших *.mm файлах поостережёмся использовать C++11 в больших количествах, шланг не всё выдержит, к сожалению. Но зато в *.cpp файлах есть где разгуляться!
+
+Если Вам неохота ходить по mkcpec-ам и их править, <a href="https://github.com/silvansky/qt48_mkspec_gcc-47">прошу на гитхаб</a>, там я выложил свою версию. И помните! GCC 4.7 установлен в <code>/usr/local/gcc-4.7/bin/</code>, так что без экспорта PATH не обойтись! Хотя, в Qt Creator'е можно добавить этот путь в PATH для сборки в свойствах проекта.
+
+Удачных сборок! И поменьше ошибок!
+
+<b>PS:</b> Если Вы обнаружили неточности и/или знаете методы получше, прошу отписываться в комментах =).
+
+метки: programming, qt, c++, objcetive-c, objective-c++, blocks, gcc, clang, gcc-4.7, macosx, 
